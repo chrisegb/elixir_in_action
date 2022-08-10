@@ -3,24 +3,34 @@ defmodule Todo.DatabaseWorker do
 
   @db_folder "./persist"
 
-  def start(db_folder) do
-    IO.puts("Starting to-do database worker.")
-    GenServer.start_link(__MODULE__, db_folder)
+  def start_link({db_folder, worker_id}) do
+    IO.puts("Starting to-do database worker #{worker_id}.")
+    GenServer.start_link(
+      __MODULE__,
+      db_folder,
+      name: via_tuple(worker_id)
+    )
   end
 
-  def store(worker_pid, key, data) do
-    GenServer.cast(worker_pid, {:store, key, data})
+  defp via_tuple(worker_id) do
+    Todo.ProcessRegistry.via_tuple({__MODULE__, worker_id})
   end
 
-  def get(worker_pid, key) do
-    GenServer.call(worker_pid, {:get, key})
+  def store(worker_id, key, data) do
+    GenServer.cast(via_tuple(worker_id), {:store, key, data})
   end
 
+  def get(worker_id, key) do
+    GenServer.call(via_tuple(worker_id), {:get, key})
+  end
+
+  @impl GenServer
   def init(db_folder) do
     File.mkdir_p!(@db_folder)
     {:ok, db_folder}
   end
 
+  @impl GenServer
   def handle_cast({:store, key, data}, db_folder) do
     db_folder
     |> file_name(key)
@@ -29,10 +39,11 @@ defmodule Todo.DatabaseWorker do
     {:noreply, db_folder}
   end
 
+  @impl GenServer
   def handle_call({:get, key}, _, db_folder) do
     data = case File.read(file_name(db_folder, key)) do
       {:ok, contents} -> :erlang.binary_to_term(contents)
-      _ -> nil
+      {:error, :enoent} -> nil
     end
 
     {:reply, data, db_folder}
